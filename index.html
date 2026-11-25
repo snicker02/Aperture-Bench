@@ -116,6 +116,63 @@
   #batchList div{padding:2px 0;}
   #batchProgress{font-size:.7rem;color:var(--accent);font-family:ui-monospace,monospace;margin-top:6px;}
 
+  /* touch: canvases handle their own gestures */
+  canvas#view{touch-action:none;}
+  .crop-overlay{touch-action:none;}
+  .touch-only{display:none;}
+
+  /* ---- phone layout: docked view, tabs underneath (body.tabbed is set from JS) ---- */
+  .ab-tabs{display:none;}
+  body.tabbed{height:100vh;height:100dvh;min-height:0;overflow:hidden;}
+  body.tabbed header{flex-wrap:nowrap;overflow-x:auto;padding:8px 12px;gap:10px;align-items:center;scrollbar-width:none;}
+  body.tabbed header::-webkit-scrollbar{display:none;}
+  body.tabbed header .sub{display:none;}
+  body.tabbed header h1{white-space:nowrap;font-size:.9rem;}
+  body.tabbed header .hist-btns button{white-space:nowrap;}
+  body.tabbed main{grid-template-columns:minmax(0,1fr);grid-template-rows:50% minmax(0,1fr);}
+  body.tabbed .stage{overflow:hidden;}
+  body.tabbed .canvas-wrap{padding:8px;overflow:hidden;}
+  body.tabbed canvas#view{box-shadow:none;}
+  body.tabbed .dropzone{padding:20px 16px;}
+  body.tabbed .scope-box{padding:5px 12px 6px;}
+  body.tabbed .scope-box h3{margin-bottom:3px;}
+  body.tabbed canvas#hist{height:28px;}
+  body.tabbed .filebar{flex-wrap:nowrap;overflow-x:auto;padding:5px 12px;scrollbar-width:none;}
+  body.tabbed .filebar::-webkit-scrollbar{display:none;}
+  body.tabbed .filebar button{white-space:nowrap;}
+  body.tabbed aside{display:flex;flex-direction:column;padding:0;overflow:hidden;min-height:0;}
+  body.tabbed .ab-tabs{display:flex;flex:none;gap:6px;overflow-x:auto;padding:8px 10px;border-bottom:1px solid var(--line);scrollbar-width:none;}
+  body.tabbed .ab-tabs::-webkit-scrollbar{display:none;}
+  .ab-tabs button{flex:none;background:var(--panel-2);border:1px solid var(--line);color:var(--text-dim);border-radius:999px;padding:7px 13px;font-size:.74rem;white-space:nowrap;cursor:pointer;}
+  .ab-tabs button.on{background:var(--accent);border-color:var(--accent);color:#1a1208;font-weight:700;}
+  body.tabbed #asideBody{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:12px 14px calc(24px + env(safe-area-inset-bottom));}
+  body.tabbed #asideBody > *{display:none;}
+  body.tabbed #asideBody > .tabon{display:block;}
+  body.tabbed #asideBody > .presets.tabon{display:flex;}
+  body.tabbed #asideBody > details.tabon{border-bottom:0;margin:0;padding:0;}
+  body.tabbed #asideBody > details.tabon > summary{display:none;}
+  @media (orientation:landscape){
+    body.tabbed main{grid-template-columns:minmax(0,1fr) 300px;grid-template-rows:minmax(0,1fr);}
+  }
+
+  @media (pointer:coarse){
+    .mouse-only{display:none;}
+    .touch-only{display:inline;}
+    input[type=range]{height:28px;background:transparent;}
+    input[type=range]::-webkit-slider-runnable-track{height:3px;background:var(--line);border-radius:2px;}
+    input[type=range]::-webkit-slider-thumb{width:22px;height:22px;margin-top:-9.5px;}
+    input[type=range]::-moz-range-track{height:3px;background:var(--line);border-radius:2px;}
+    input[type=range]::-moz-range-thumb{width:20px;height:20px;}
+    .selband input[type=range]{height:28px;}
+    header .hist-btns button,.filebar button,.presets button,.ghostbtn,.fullbtn,.transform-btns button,
+    .curve-wrap button,.preset-item button,.dropzone button,.ab-tabs button,select,input[type=text]{min-height:40px;}
+    .presets button,.ghostbtn,.transform-btns button,.curve-wrap button,.filebar button,header .hist-btns button{font-size:.8rem;}
+    input[type=color]{height:34px;}
+    .row{grid-template-columns:84px 1fr 42px;margin-bottom:4px;}
+    .row label{font-size:.78rem;}
+    .crop-overlay .handle{width:26px;height:26px;}
+  }
+
   ::-webkit-scrollbar{width:9px;} ::-webkit-scrollbar-track{background:var(--panel);} ::-webkit-scrollbar-thumb{background:var(--line);border-radius:5px;}
 </style>
 </head>
@@ -136,7 +193,7 @@
     <div class="canvas-wrap" id="canvasWrap">
       <div class="dropzone" id="dropzone">
         <b>Drop an image here</b>
-        drag & drop, paste, or
+        <span class="mouse-only">drag &amp; drop, paste, or</span><span class="touch-only">tap below to pick a photo</span>
         <div><button id="pickBtn">choose a file</button></div>
         <input type="file" id="fileInput" accept="image/*">
         <div id="loadError" style="display:none;color:#ff6b6b;font-size:.75rem;margin-top:14px;line-height:1.5;"></div>
@@ -222,7 +279,7 @@
           <button data-ch="b">B</button>
         </div>
         <canvas id="curveCanvas" width="256" height="256"></canvas>
-        <div class="curve-hint">Click to add a point, drag to shape the curve, double-click a point to remove it.</div>
+        <div class="curve-hint"><span class="mouse-only">Click to add a point, drag to shape the curve, double-click a point to remove it.</span><span class="touch-only">Tap to add a point, drag to shape the curve, double-tap a point to remove it.</span></div>
         <button class="ghostbtn" id="curveReset">Reset curve</button>
       </div>
     </details>
@@ -817,10 +874,34 @@
     return -1;
   }
 
-  curveCanvas.addEventListener('mousedown', (e) => {
+  // pointer events so mouse, pen and touch all work; touch gets a bigger hit radius and its own double-tap
+  let lastCurveTap = 0, lastCurveTapXY = [0,0], curveTapRemovedAt = 0;
+  function removeCurvePointNear(px, py, tol){
+    const idx = findNearPoint(px, py, tol);
+    const pts = curves[activeChannel];
+    if(idx > 0 && idx < pts.length-1){
+      pts.splice(idx,1);
+      onCurveChange();
+      pushHistory();
+    }
+  }
+  curveCanvas.addEventListener('pointerdown', (e) => {
+    if(e.button > 0) return;
     const rect = curveCanvas.getBoundingClientRect();
     const px = e.clientX - rect.left, py = e.clientY - rect.top;
-    const idx = findNearPoint(px, py, 10);
+    const tol = e.pointerType === 'mouse' ? 10 : 20;
+    if(e.pointerType !== 'mouse'){
+      const now = performance.now();
+      const near = Math.hypot(px - lastCurveTapXY[0], py - lastCurveTapXY[1]) < 24;
+      if(now - lastCurveTap < 350 && near){
+        lastCurveTap = 0; curveTapRemovedAt = now; dragPoint = null;
+        removeCurvePointNear(px, py, tol);
+        return;
+      }
+      lastCurveTap = now; lastCurveTapXY = [px, py];
+    }
+    try{ curveCanvas.setPointerCapture(e.pointerId); }catch(err){}
+    const idx = findNearPoint(px, py, tol);
     if(idx >= 0){ dragPoint = idx; }
     else {
       const [x,y] = curveCanvasToPoint(e);
@@ -830,7 +911,7 @@
     }
     onCurveChange();
   });
-  curveCanvas.addEventListener('mousemove', (e) => {
+  curveCanvas.addEventListener('pointermove', (e) => {
     if(dragPoint === null) return;
     const [x,y] = curveCanvasToPoint(e);
     const pts = curves[activeChannel];
@@ -845,17 +926,13 @@
     }
     onCurveChange();
   });
-  window.addEventListener('mouseup', () => { if(dragPoint!==null){ dragPoint=null; pushHistory(); } });
+  const endCurveDrag = () => { if(dragPoint!==null){ dragPoint=null; pushHistory(); } };
+  window.addEventListener('pointerup', endCurveDrag);
+  window.addEventListener('pointercancel', endCurveDrag);
   curveCanvas.addEventListener('dblclick', (e) => {
+    if(performance.now() - curveTapRemovedAt < 600) return;   // already handled as a double-tap
     const rect = curveCanvas.getBoundingClientRect();
-    const px = e.clientX - rect.left, py = e.clientY - rect.top;
-    const idx = findNearPoint(px, py, 10);
-    const pts = curves[activeChannel];
-    if(idx > 0 && idx < pts.length-1){
-      pts.splice(idx,1);
-      onCurveChange();
-      pushHistory();
-    }
+    removeCurvePointNear(e.clientX - rect.left, e.clientY - rect.top, 10);
   });
   document.querySelectorAll('.curve-wrap button').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -900,12 +977,15 @@
   });
 
   let cropDrag = null;
-  cropOverlay.addEventListener('mousedown', (e) => {
+  cropOverlay.addEventListener('pointerdown', (e) => {
+    if(e.button > 0) return;
     const handle = e.target.dataset.h;
     cropDrag = { handle: handle || 'move', startX:e.clientX, startY:e.clientY, orig: {...cropRect} };
+    try{ cropOverlay.setPointerCapture(e.pointerId); }catch(err){}
+    e.preventDefault();
     e.stopPropagation();
   });
-  window.addEventListener('mousemove', (e) => {
+  window.addEventListener('pointermove', (e) => {
     if(!cropDrag) return;
     const rect = canvas.getBoundingClientRect();
     const dx = (e.clientX - cropDrag.startX)/rect.width;
@@ -924,7 +1004,8 @@
     }
     positionCropOverlay();
   });
-  window.addEventListener('mouseup', () => { cropDrag = null; });
+  window.addEventListener('pointerup', () => { cropDrag = null; });
+  window.addEventListener('pointercancel', () => { cropDrag = null; });
 
   document.getElementById('cropApply').addEventListener('click', () => {
     if(!cropping || !texture) return;
@@ -1259,23 +1340,39 @@
   }
 
   // ---------------- compare split ----------------
-  canvas.addEventListener('mousedown', (e) => {
-    if(cropping) return;
+  function compareOff(){
+    compareOn = false;
+    labelBefore.style.display = 'none';
+    labelAfter.style.display = 'none';
+    render();
+  }
+  let lastViewTap = 0, viewTapOffAt = 0;
+  canvas.addEventListener('pointerdown', (e) => {
+    if(cropping || e.button > 0) return;
+    if(e.pointerType !== 'mouse'){
+      const now = performance.now();
+      if(now - lastViewTap < 350){ lastViewTap = 0; viewTapOffAt = now; compareOff(); return; }
+      lastViewTap = now;
+    }
+    e.preventDefault();
     compareOn = true;
     labelBefore.style.display = 'block';
     labelAfter.style.display = 'block';
     updateSplit(e);
     render();
     const move = (ev) => { updateSplit(ev); render(); };
-    const up = () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); };
-    window.addEventListener('mousemove', move);
-    window.addEventListener('mouseup', up);
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
   });
   canvas.addEventListener('dblclick', () => {
-    compareOn = false;
-    labelBefore.style.display = 'none';
-    labelAfter.style.display = 'none';
-    render();
+    if(performance.now() - viewTapOffAt < 600) return;   // already handled as a double-tap
+    compareOff();
   });
   function updateSplit(e){
     const rect = canvas.getBoundingClientRect();
@@ -1340,6 +1437,7 @@
     el.textContent = '';
   }
 
+  let sourceImg = null;   // the image being edited, so batch processing can hand it back afterwards
   function handleFile(file){
     if(!file){ return; }
     if(!file.type.startsWith('image/')){
@@ -1373,6 +1471,7 @@
           canvasInner.style.display = 'block';
           fname.textContent = file.name;
           loadImageToTexture(img);
+          sourceImg = img;
           applyExifOrientation(orientation);
           render();
           captureOriginalSnapshot();
@@ -1541,15 +1640,47 @@
     const listEl = document.getElementById('batchList');
     listEl.innerHTML = batchFiles.map(f => `<div>${f.name}</div>`).join('');
   });
-  function loadJSZip(){
-    if(window.JSZip) return Promise.resolve();
-    return new Promise((resolve, reject) => {
-      const s = document.createElement('script');
-      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
-      s.onload = () => resolve();
-      s.onerror = () => reject(new Error('JSZip failed to load'));
-      document.head.appendChild(s);
-    });
+
+  // Minimal ZIP writer (store method). Images are already compressed, so deflate would gain almost nothing.
+  const CRC_TABLE = (() => {
+    const t = new Uint32Array(256);
+    for(let n=0;n<256;n++){ let c=n; for(let k=0;k<8;k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1); t[n] = c >>> 0; }
+    return t;
+  })();
+  function crc32(u8){
+    let c = 0xFFFFFFFF;
+    for(let i=0;i<u8.length;i++) c = CRC_TABLE[(c ^ u8[i]) & 255] ^ (c >>> 8);
+    return (c ^ 0xFFFFFFFF) >>> 0;
+  }
+  function makeZip(entries){   // entries: [{name, data: Uint8Array}]
+    const enc = new TextEncoder();
+    const d = new Date();
+    const dosTime = (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1);
+    const dosDate = ((Math.max(1980, d.getFullYear()) - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate();
+    const local = [], central = [];
+    let offset = 0, centralSize = 0;
+    for(const e of entries){
+      const name = enc.encode(e.name), crc = crc32(e.data), size = e.data.length;
+      const lh = new DataView(new ArrayBuffer(30));
+      lh.setUint32(0, 0x04034b50, true); lh.setUint16(4, 20, true); lh.setUint16(6, 0x0800, true); lh.setUint16(8, 0, true);
+      lh.setUint16(10, dosTime, true); lh.setUint16(12, dosDate, true); lh.setUint32(14, crc, true);
+      lh.setUint32(18, size, true); lh.setUint32(22, size, true); lh.setUint16(26, name.length, true); lh.setUint16(28, 0, true);
+      local.push(lh, name, e.data);
+      const ch = new DataView(new ArrayBuffer(46));
+      ch.setUint32(0, 0x02014b50, true); ch.setUint16(4, 20, true); ch.setUint16(6, 20, true); ch.setUint16(8, 0x0800, true);
+      ch.setUint16(10, 0, true); ch.setUint16(12, dosTime, true); ch.setUint16(14, dosDate, true); ch.setUint32(16, crc, true);
+      ch.setUint32(20, size, true); ch.setUint32(24, size, true); ch.setUint16(28, name.length, true);
+      ch.setUint16(30, 0, true); ch.setUint16(32, 0, true); ch.setUint16(34, 0, true); ch.setUint16(36, 0, true);
+      ch.setUint32(38, 0, true); ch.setUint32(42, offset, true);
+      central.push(ch, name);
+      offset += 30 + name.length + size;
+      centralSize += 46 + name.length;
+    }
+    const end = new DataView(new ArrayBuffer(22));
+    end.setUint32(0, 0x06054b50, true); end.setUint16(4, 0, true); end.setUint16(6, 0, true);
+    end.setUint16(8, entries.length, true); end.setUint16(10, entries.length, true);
+    end.setUint32(12, centralSize, true); end.setUint32(16, offset, true); end.setUint16(20, 0, true);
+    return new Blob([...local, ...central, end], {type:'application/zip'});
   }
 
   document.getElementById('batchRun').addEventListener('click', async () => {
@@ -1558,10 +1689,7 @@
       return;
     }
     const progress = document.getElementById('batchProgress');
-    progress.textContent = 'Loading zip library…';
-    try{ await loadJSZip(); }
-    catch(err){ progress.textContent = 'JSZip failed to load — check your network settings.'; return; }
-    const zip = new JSZip();
+    const zipEntries = [], usedNames = new Set();
     const mime = formatSel.value;
     const q = parseInt(qualitySlider.value,10)/100;
     const ext = mime === 'image/png' ? 'png' : (mime === 'image/webp' ? 'webp' : 'jpg');
@@ -1581,11 +1709,19 @@
             try{ orientation = getExifOrientation(e.target.result); }catch(err){}
             loadImageToTexture(img);
             applyState(currentState);
+            // output size comes from this image and the crop fraction, not the editing image's pixel size
+            outW = Math.max(1, Math.round(imgW*cropScale[0]));
+            outH = Math.max(1, Math.round(imgH*cropScale[1]));
+            canvas.width = outW; canvas.height = outH;
+            gl.viewport(0,0,outW,outH);
             applyExifOrientation(orientation);
             render();
-            canvas.toBlob((outBlob) => {
+            canvas.toBlob(async (outBlob) => {
               const base = file.name.replace(/\.[^.]+$/, '');
-              zip.file(base + '-adjusted.' + ext, outBlob);
+              let name = base + '-adjusted.' + ext, n = 2;
+              while(usedNames.has(name)) name = base + '-adjusted-' + (n++) + '.' + ext;
+              usedNames.add(name);
+              if(outBlob) zipEntries.push({ name, data: new Uint8Array(await outBlob.arrayBuffer()) });
               URL.revokeObjectURL(url);
               resolve();
             }, mime, mime === 'image/png' ? undefined : q);
@@ -1595,8 +1731,15 @@
         reader.readAsArrayBuffer(file);
       });
     }
+    // put the image you were editing back on the bench
+    if(sourceImg){
+      loadImageToTexture(sourceImg);
+      applyState(currentState);
+      render();
+      scheduleHistogram();
+    }
     progress.textContent = 'Zipping…';
-    const content = await zip.generateAsync({type:'blob'});
+    const content = makeZip(zipEntries);
     const zurl = URL.createObjectURL(content);
     const a = document.createElement('a');
     a.href = zurl; a.download = 'aperturebench-batch.zip';
@@ -1606,6 +1749,88 @@
   });
 
   window.addEventListener('resize', () => { if(cropping) positionCropOverlay(); });
+
+  // ---------------- phone layout: docked view, tabs underneath ----------------
+  (function phoneLayout(){
+    const aside = document.querySelector('aside');
+    const asideBody = document.createElement('div');
+    asideBody.id = 'asideBody';
+    while(aside.firstChild) asideBody.appendChild(aside.firstChild);
+    const bar = document.createElement('div');
+    bar.className = 'ab-tabs';
+    bar.setAttribute('role', 'tablist');
+    aside.appendChild(bar);
+    aside.appendChild(asideBody);
+
+    // one tab per panel section, labelled with the section's own heading
+    const sections = [];
+    let presetsSec = null;
+    [...asideBody.children].forEach(el => {
+      if(el.matches('details')) sections.push({ label: el.querySelector('summary').textContent.trim(), els: [el] });
+      else if(el.classList.contains('presets')){ presetsSec = { label: 'Presets', els: [el] }; sections.push(presetsSec); }
+      else if(el.id === 'resetAll' && presetsSec) presetsSec.els.push(el);
+      else if(sections.length) sections[sections.length-1].els.push(el);
+    });
+    const KEY = 'aperture-bench.tab';
+    let cur = null;
+    try{ cur = localStorage.getItem(KEY); }catch(e){}
+    const btns = sections.map(sec => {
+      const b = document.createElement('button');
+      b.type = 'button'; b.textContent = sec.label; b.setAttribute('role', 'tab');
+      b.addEventListener('click', () => select(sec.label));
+      bar.appendChild(b);
+      return b;
+    });
+    function select(label){
+      const sec = sections.find(x => x.label === label) || sections[0];
+      cur = sec.label;
+      try{ localStorage.setItem(KEY, cur); }catch(e){}
+      sections.forEach((x, i) => {
+        const on = x === sec;
+        x.els.forEach(el => el.classList.toggle('tabon', on));
+        btns[i].classList.toggle('on', on);
+        btns[i].setAttribute('aria-selected', on ? 'true' : 'false');
+      });
+      asideBody.scrollTop = 0;
+      const b = btns[sections.indexOf(sec)];
+      const off = b.getBoundingClientRect().left - bar.getBoundingClientRect().left;
+      bar.scrollLeft = Math.max(0, bar.scrollLeft + off - (bar.clientWidth - b.offsetWidth) / 2);
+    }
+
+    // the view is sized from its own box, not the window
+    function fitView(){
+      if(document.body.classList.contains('tabbed')){
+        const cs = getComputedStyle(canvasWrap);
+        const w = canvasWrap.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight) - 2;
+        const h = canvasWrap.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom) - 2;
+        canvas.style.maxWidth = Math.max(40, w) + 'px';
+        canvas.style.maxHeight = Math.max(40, h) + 'px';
+      } else {
+        canvas.style.maxWidth = '';
+        canvas.style.maxHeight = '';
+      }
+      if(cropping) positionCropOverlay();
+    }
+
+    const mq = window.matchMedia('(max-width: 760px), (max-height: 500px) and (orientation: landscape)');
+    const openState = new Map();
+    function apply(){
+      const on = mq.matches;
+      if(on !== document.body.classList.contains('tabbed')){
+        document.body.classList.toggle('tabbed', on);
+        asideBody.querySelectorAll(':scope > details').forEach(d => {
+          if(on){ openState.set(d, d.open); d.open = true; }
+          else if(openState.has(d)) d.open = openState.get(d);
+        });
+        if(on) select(cur);
+      }
+      fitView();
+    }
+    if(window.ResizeObserver) new ResizeObserver(fitView).observe(canvasWrap);
+    else window.addEventListener('resize', fitView);
+    if(mq.addEventListener) mq.addEventListener('change', apply); else mq.addListener(apply);
+    apply();
+  })();
 
   // ---------------- shared image shelf (snicker02.github.io/shared/bridge.js) ----------------
   const shelfBtn = document.getElementById('shelfBtn');
